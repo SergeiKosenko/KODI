@@ -1,0 +1,5 @@
+/build/
+/.android-sdk/
+/.cache/
+/local.properties
+*.keystore

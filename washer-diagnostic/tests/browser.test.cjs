@@ -1,0 +1,36 @@
+const {chromium}=require('playwright');
+const assert=require('node:assert/strict');
+const path=require('node:path');
+(async()=>{
+ const browser=await chromium.launch({executablePath:'/usr/bin/chromium',headless:true,args:['--no-sandbox']});
+ const page=await browser.newPage({viewport:{width:1440,height:1080},deviceScaleFactor:1});
+ const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto('http://127.0.0.1:8765');await page.locator('.error-card').first().waitFor();
+ await page.screenshot({path:path.join(__dirname,'../docs/screen-desktop.png'),fullPage:true});
+ assert.equal(await page.locator('.error-card').count(),6);
+ await page.selectOption('#brand','LG');await page.fill('#code','ОЕ');await page.click('button[type=submit]');
+ assert.equal(await page.locator('.error-card').count(),1);await page.locator('.error-card').click();
+ await page.locator('#save-entry').click();await page.fill('#note','Насос проверен. Контрольный запуск после очистки.');await page.click('#save-note');await page.click('#close-modal');
+ await page.reload();await page.locator('[data-page=saved]').click();assert.match(await page.locator('#content').innerText(),/LG/);
+ await page.locator('[data-entry=lg-oe]').first().click();assert.match(await page.locator('#note').inputValue(),/Насос проверен/);await page.click('#close-modal');
+ await page.locator('[data-page=service]').click();await page.selectOption('#brand','LG');await page.fill('#model','F1096ND3');await page.click('button[type=submit]');
+ assert.equal(await page.locator('.service-card').count(),1);assert.equal(await page.locator('.service-steps').isVisible(),false);await page.locator('[data-unlock]').check();assert.equal(await page.locator('.service-steps').isVisible(),true);
+ await page.screenshot({path:path.join(__dirname,'../docs/screen-service.png'),fullPage:true});
+ await page.fill('#model','UNKNOWN');await page.click('button[type=submit]');assert.equal(await page.locator('.service-card').count(),0);assert.match(await page.locator('#service-results').innerText(),/отсутствует/);
+ await page.locator('[data-page=catalog]').click();
+ await page.setInputFiles('#import-file',{name:'bad.json',mimeType:'application/json',buffer:Buffer.from('{"schemaVersion":2}')});await page.waitForFunction(()=>document.querySelector('#import-message').textContent.includes('отменён'));
+ const data={schemaVersion:1,entries:[{id:'test-exact',brand:'TestBrand',models:['MODEL1'],title:'Import test',codes:['X01'],system:'drain',summary:'Test imported card',scope:'MODEL1 only',checks:['Inspect'],causes:['Test cause'],source:{title:'Test manual',url:'https://example.org/manual.pdf',page:'10'}}],procedures:[]};
+ await page.setInputFiles('#import-file',{name:'valid.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(data))});await page.waitForFunction(()=>document.querySelector('#brand-grid').textContent.includes('TestBrand'));
+ await page.locator('[data-brand=TestBrand]').click();await page.fill('#model','MODEL2');await page.fill('#code','X01');await page.click('button[type=submit]');assert.equal(await page.locator('.error-card').count(),0);
+ await page.fill('#model','MODEL1');await page.click('button[type=submit]');assert.equal(await page.locator('.error-card').count(),1);
+ await page.locator('[data-page=catalog]').click();const downloadPromise=page.waitForEvent('download');await page.click('#export-data');const download=await downloadPromise;const fs=require('node:fs');const json=JSON.parse(fs.readFileSync(await download.path(),'utf8'));assert.equal(json.backupVersion,1);assert(json.saved.includes('lg-oe'));assert(json.notes['lg-oe']);
+ // A backup with no custom catalog must still restore personal data.
+ const backup={backupVersion:1,schemaVersion:1,custom:{schemaVersion:1,entries:[],procedures:[]},saved:['lg-oe'],notes:{'lg-oe':'Восстановлено'}};
+ await page.setInputFiles('#import-file',{name:'backup.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(backup))});await page.waitForFunction(()=>localStorage.getItem('mk-notes').includes('Восстановлено'));
+ await page.evaluate(()=>{localStorage.clear()});await page.reload();await page.locator('.error-card').first().waitFor();
+ await page.setViewportSize({width:390,height:844});await page.screenshot({path:path.join(__dirname,'../docs/screen-mobile.png'),fullPage:true});
+ assert(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));
+ await page.selectOption('#brand','LG');await page.fill('#code','OE');await page.click('button[type=submit]');await page.locator('.error-card').click();await page.screenshot({path:path.join(__dirname,'../docs/screen-detail.png'),fullPage:true});
+ assert.equal(await page.locator('#modal').isVisible(),true);await page.keyboard.press('Escape');assert.equal(await page.locator('#modal').isVisible(),false);
+ assert.deepEqual(errors,[]);await browser.close();console.log('PASS: search, brand isolation, favorites/notes persistence, service model matching and gate, invalid/valid import, exact model filtering, backup export/restore, mobile layout, modal navigation; no JavaScript errors.');
+})().catch(e=>{console.error(e);process.exit(1)});
